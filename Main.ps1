@@ -225,14 +225,14 @@ function Select-FromStringArray {
         [string[]]$options = ("test1", "Test2")
     )
     $prompt = "`n"
-    $i = 0
+    $i = 1
     foreach ($option in $options) {
         $prompt += "$i - $option`n"
         $i++
     }
     $prompt += "Select option"
     $MenuChoice = Read-Host -Prompt $prompt
-    $choice = $options[$MenuChoice]
+    $choice = $options[$MenuChoice-1]
     if ($null -eq $choice) {
         throw "Invalid choice"
         
@@ -262,18 +262,23 @@ function Monitor-RDS {
 Function Select-FolderDialog {
     param([string]$Description = "Select Folder", [string]$RootFolder = "Desktop")
     try {
-        [System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") |
-        Out-Null     
-
+        Add-Type -AssemblyName System.Windows.Forms
         $objForm = New-Object System.Windows.Forms.FolderBrowserDialog
         $objForm.Rootfolder = $RootFolder
         $objForm.Description = $Description
-        $Show = $objForm.ShowDialog()
-        If ($Show -eq "OK") {
-            Return $objForm.SelectedPath
-        }
-        Else {
-            Write-Error "Operation cancelled by user."
+        $validPathSelected = $false
+        while (-not $validPathSelected) {
+            $Show = $objForm.ShowDialog()
+            If ($Show -eq "OK") {
+                $selectedPath = $objForm.SelectedPath
+                if (Test-Path -Path $selectedPath -PathType Container) {
+                    $validPathSelected = $true
+                    Return $selectedPath
+                }
+                else {
+                    [System.Windows.Forms.MessageBox]::Show("Invalid directory selected. Please select a valid directory.", "Invalid Directory", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                }
+            }
         }
     }
     catch {
@@ -322,6 +327,17 @@ function Initialize-Config {
 #region mainloop
 
 $ErrorActionPreference = "Stop"
+
+
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Warning "You do not have Administrator rights to run this script!`nPlease re-run this script as an Administrator!"
+    $arguments = "& '" + $myinvocation.mycommand.definition + "'"
+    Start-Process powershell -Verb runAs -ArgumentList $arguments
+    Break
+}
+
+
+
 Initialize-Config
 
 
