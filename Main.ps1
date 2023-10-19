@@ -1,6 +1,6 @@
 param(
     [ValidateSet( "Interactive", "Monitor-RDS")]
-    [string]$action = "Interactive"
+    [string]$scriptaction = "Interactive"
 )
 
 #region functions
@@ -309,31 +309,47 @@ function Set-LogFolder {
 }
 
 function Initialize-Config {
-    
-    $configPath = Join-Path -Path $env:APPDATA -ChildPath "CloudFactoryToolbox.xml"
+    $Rootfolder = "C:\CloudFactoryToolbox"
+    $configPath = Join-Path -Path $Rootfolder -ChildPath "CloudFactoryToolbox.xml"
     $ErrorActionPreference = "Stop"
     if (Test-Path -Path $configPath) {
         $global:config = Import-Clixml -Path $configPath
     }
     else {
         [pscustomobject]$global:config = @{
-            Logfolder = "$($env:USERPROFILE)\desktop"
+            Logfolder = join-path -Path $Rootfolder -ChildPath "Logs"
         }
         $global:config | Export-Clixml -Path $configPath
     }
+
+    #create logfolder if it doesnt exist. including parent folders
+    if (!(Test-Path -Path $global:config.Logfolder)) {
+        New-Item -ItemType Directory -Force -Path $global:config.Logfolder
+    }
+    
 }
 
-function Test-Elevated {
+function Elevate {
     #check if script is running elevated. Elevate if not.
     if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
         if ([int](Get-CimInstance -Class Win32_OperatingSystem | Select-Object -ExpandProperty BuildNumber) -ge 6000) {
-            $CommandLine = "-File `"" + $MyInvocation.MyCommand.Path + "`" " + $MyInvocation.UnboundArguments
+            
+            $CommandLine = "-File $($MyInvocation.PSCommandPath) $($MyInvocation.UnboundArguments)"
             Start-Process -FilePath PowerShell.exe -Verb Runas -ArgumentList $CommandLine
             Exit
         }
     }
 }
-
+function ISElevated {
+    #check if script is running elevated. Elevate if not.
+    if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
+        return $false
+    }
+    else {
+        return $true
+    }
+    
+}
 
 
 
@@ -343,15 +359,30 @@ function Test-Elevated {
 
 $ErrorActionPreference = "Stop"
 
-#elavate to admin if not already
-Initialize-Config
-switch ($action) {
-    Interactive {
-        Test-Elevated
+#write host which script is running
+Write-Host "Running $($MyInvocation.MyCommand.Name) as $($MyInvocation.MyCommand.ScriptBlock.File) with arguments $($MyInvocation.UnboundArguments)"
 
-        
-        
-        
+#elavate to admin if not already
+Elevate
+
+Initialize-Config
+
+switch ($scriptaction) {
+    Monitor-RDS {
+        if (ISElevated){
+            Monitor-RDS
+        }
+        else{
+            #write to log file that the script was started without elevation
+            $Logfilepath = Join-Path -Path $global:config.Logfolder -ChildPath "Errors.csv"
+            [pscustomobject]@{
+                Datetime = get-date
+                Error = "Script was started without elevation"
+            }| export-csv  $Logfilepath -NoTypeInformation -Append  
+            exit
+        }
+    }
+    Default {
         while ($true) {
             Write-Output "Current Config:`n $($global:config|out-string)"
             try {
@@ -372,10 +403,7 @@ switch ($action) {
         }
 
     }
-    Monitor-RDS {
-        Monitor-RDS
-    }
-    Default {throw "Invalid action"}
+
 }
 
 
