@@ -291,6 +291,62 @@ function ISElevated {
 function ISInteractive {
     [System.Environment]::UserInteractive
 }
+function Update-Toolbox {
+    #if scriptage is greate than 1 hour, update script
+    
+    Write-Host "Script is older than 1 hour. Updating script"
+    $scriptpath = $script.FullName
+    $arguments = "-command irm toolbox.cloudfactory.dk | iex"
+    Start-Process powershell -Verb runAs -ArgumentList $arguments
+    exit
+    
+}
+
+function Create-ScheduledTask {
+    param(
+        
+        [string]$ScriptAction = "Monitor-RDS"
+
+    )
+    [string]$TaskName = "CloudFactoryToolboxTask-$ScriptAction"
+    $TaskExists = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+
+    if (-not $TaskExists) {
+        $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-file $($MyInvocation.MyCommand.ScriptBlock.File) -scriptaction $ScriptAction"
+        $Trigger = New-ScheduledTaskTrigger -AtStartup
+        $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -DontStopOnIdleEnd -MultipleInstances IgnoreNew
+        $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
+
+        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal
+    }
+}
+
+function Delete-ScheduledTask {
+    param(
+        
+        [string]$ScriptAction = "Monitor-RDS"
+
+    )
+    [string]$TaskName = "CloudFactoryToolboxTask-$ScriptAction"
+    $TaskExists = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+
+    if ($TaskExists) {
+        Stop-ScheduledTask -TaskName $TaskName
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    }
+}
+
+
+function Start-Monitor-RDS {
+    Create-ScheduledTask -ScriptAction "Monitor-RDS"
+    Start-ScheduledTask -TaskName "CloudFactoryToolboxTask-Monitor-RDS"
+    Write-Host "Monitor-RDS task has been created and started"
+}
+
+function Stop-Monitor-RDS {
+    Delete-ScheduledTask -ScriptAction "Monitor-RDS"
+    Write-Host "Monitor-RDS task has been stopped and deleted"
+}
 
 #endregion
 
@@ -301,25 +357,28 @@ try {
 
     #elavate to admin if not already
     #region mainloop
-    if (-not (ISElevated)){
+    if (-not (ISElevated)) {
         write-host -ForegroundColor Red "Script was started without elevation. Restart with elevation!"
         Start-Sleep -second 10
         exit
     }
 
     Initialize-Config
-    
-    #get age of scripts in seconds
-    $script=Get-Item $MyInvocation.MyCommand.ScriptBlock.File
-    $scriptage = (get-date) - $script.LastWriteTime
-    #if scriptage is greate than 1 hour, update script
-    if ($scriptage.TotalHours -gt 1) {
-        Write-Host "Script is older than 1 hour. Updating script"
-        $scriptpath = $script.FullName
-        $arguments = "-command irm toolbox.cloudfactory.dk | iex"
-        Start-Process powershell -Verb runAs -ArgumentList $arguments
-        exit
+
+    #check if a new version of the script is available
+    try {
+        $localscript = Get-Item -Path $MyInvocation.MyCommand.ScriptBlock.File
+        $localscriptcontent = Get-Content -Path $localscript.FullName
+        $remotescriptcontent = Invoke-RestMethod "https://raw.githubusercontent.com/cloudfactorydk/PSToolbox/main/Main.ps1"
+        if ($localscriptcontent -ne $remotescriptcontent) {
+            write-host -ForegroundColor Blue "New version of script is available."
+        }
     }
+    catch {
+        Write-Warning "Can't check for new version of script."
+    }
+
+
 
     switch ($scriptaction) {
         Monitor-RDS {
@@ -331,7 +390,8 @@ try {
                 Write-Output "Current Config:`n $($global:config|out-string)"
 
                 $Action = Select-FromStringArray -title "Choose Action" -options @(
-                    "Monitor-RDS"
+                    "Start-Monitor-RDS" 
+                    "Stop-Monitor-RDS"
                     "Update-Toolbox"
                     "Exit"
         
