@@ -1,3 +1,8 @@
+param(
+    [ValidateSet( "Interactive", "Monitor-RDS")]
+    [string]$action = "Interactive"
+)
+
 #region functions
 
 
@@ -232,7 +237,7 @@ function Select-FromStringArray {
     }
     $prompt += "Select option"
     $MenuChoice = Read-Host -Prompt $prompt
-    $choice = $options[$MenuChoice-1]
+    $choice = $options[$MenuChoice - 1]
     if ($null -eq $choice) {
         throw "Invalid choice"
         
@@ -318,6 +323,15 @@ function Initialize-Config {
     }
 }
 
+function Test-Elevated {
+    # function to test if the script is running as admin
+    if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Warning "You do not have Administrator rights to run this script!`nPlease re-run this script as an Administrator!"
+        $arguments = "-command irm toolbox.cloudfactory.dk | iex"
+        Start-Process powershell -Verb runAs -ArgumentList $arguments
+        Break
+    }
+}
 
 
 
@@ -328,38 +342,41 @@ function Initialize-Config {
 
 $ErrorActionPreference = "Stop"
 
-
-if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Warning "You do not have Administrator rights to run this script!`nPlease re-run this script as an Administrator!"
-    $arguments = "& '" + $myinvocation.mycommand.definition + "'"
-    Start-Process powershell -Verb runAs -ArgumentList $arguments
-    Break
-}
-
-
-
+#elavate to admin if not already
 Initialize-Config
-
-
-
-while ($true) {
-    Write-Output "Current Config:`n $($global:config|out-string)"
-    try {
+switch ($action) {
+    Interactive {
+        Test-Elevated
 
         
-        $Action = Select-FromStringArray -title "Choose Action" -options @(
-            "Monitor-RDS"
-            "Set-LogFolder"
-            "Exit"
+        
+        
+        while ($true) {
+            Write-Output "Current Config:`n $($global:config|out-string)"
+            try {
+        
+                
+                $Action = Select-FromStringArray -title "Choose Action" -options @(
+                    "Monitor-RDS"
+                    "Set-LogFolder"
+                    "Exit"
+        
+                )
+                $ActionSB = ([scriptblock]::Create($action))
+                Invoke-Command -ScriptBlock $ActionSB
+            }
+            catch {
+                Write-Warning $_ | Out-String
+            }
+        }
 
-        )
-        $ActionSB = ([scriptblock]::Create($action))
-        Invoke-Command -ScriptBlock $ActionSB
     }
-    catch {
-        Write-Warning $_ | Out-String
+    Monitor-RDS {
+        Monitor-RDS
     }
+    Default {throw "Invalid action"}
 }
+
 
 
 #endregion
