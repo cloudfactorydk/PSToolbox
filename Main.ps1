@@ -264,82 +264,20 @@ function Monitor-RDS {
     }
     
 }
-Function Select-FolderDialog {
-    param([string]$Description = "Select Folder", [string]$RootFolder = "Desktop")
-    try {
-        Add-Type -AssemblyName System.Windows.Forms
-        $objForm = New-Object System.Windows.Forms.FolderBrowserDialog
-        $objForm.Rootfolder = $RootFolder
-        $objForm.Description = $Description
-        $validPathSelected = $false
-        while (-not $validPathSelected) {
-            $Show = $objForm.ShowDialog()
-            If ($Show -eq "OK") {
-                $selectedPath = $objForm.SelectedPath
-                if (Test-Path -Path $selectedPath -PathType Container) {
-                    $validPathSelected = $true
-                    Return $selectedPath
-                }
-                else {
-                    [System.Windows.Forms.MessageBox]::Show("Invalid directory selected. Please select a valid directory.", "Invalid Directory", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                }
-            }
-        }
-    }
-    catch {
-        do {
-            Write-Host "An error occurred while trying to select a folder. Please enter a valid path."
-            $path = Read-Host "Enter the path"
-        } while (!(Test-Path -Path $path))
-        Return $path
-    }
-}
-
-function Set-LogFolder {
-    
-    param(
-        [string]$newLogFolder = (Select-FolderDialog)
-    )
-    $ErrorActionPreference = "Stop"
-    if (!(Test-Path -Path $newLogFolder)) {
-        New-Item -ItemType Directory -Force -Path $newLogFolder
-    }
-    $global:config.Logfolder = $newLogFolder
-    $global:config | Export-Clixml -Path $configPath
-}
 
 function Initialize-Config {
     $Rootfolder = "C:\CloudFactoryToolbox"
-    $configPath = Join-Path -Path $Rootfolder -ChildPath "CloudFactoryToolbox.xml"
-    $ErrorActionPreference = "Stop"
-    if (Test-Path -Path $configPath) {
-        $global:config = Import-Clixml -Path $configPath
+    $Logfolder = join-path -Path $Rootfolder -ChildPath "Logs"
+    [pscustomobject]$global:config = @{
+        Logfolder    = $Logfolder
+        ErrorLogPath = join-path -Path $Logfolder -ChildPath "Errors.log"
     }
-    else {
-        [pscustomobject]$global:config = @{
-            Logfolder = join-path -Path $Rootfolder -ChildPath "Logs"
-        }
-        $global:config | Export-Clixml -Path $configPath
-    }
-
     #create logfolder if it doesnt exist. including parent folders
-    if (!(Test-Path -Path $global:config.Logfolder)) {
-        New-Item -ItemType Directory -Force -Path $global:config.Logfolder
-    }
-    
+    if (!(Test-Path -Path $Logfolder)) {
+        New-Item -ItemType Directory -Force -Path $Logfolder
+    } 
 }
 
-function Elevate {
-    #check if script is running elevated. Elevate if not.
-    if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
-        if ([int](Get-CimInstance -Class Win32_OperatingSystem | Select-Object -ExpandProperty BuildNumber) -ge 6000) {
-            
-            $CommandLine = "-File $($MyInvocation.PSCommandPath) $($MyInvocation.UnboundArguments)"
-            Start-Process -FilePath PowerShell.exe -Verb Runas -ArgumentList $CommandLine
-            Exit
-        }
-    }
-}
 function ISElevated {
     #check if script is running elevated. Elevate if not.
     if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
@@ -350,62 +288,78 @@ function ISElevated {
     }
     
 }
-
-
+function ISInteractive {
+    [System.Environment]::UserInteractive
+}
 
 #endregion
 
-#region mainloop
-
 $ErrorActionPreference = "Stop"
+try {
+    #write host which script is running
+    Write-Host "Running $($MyInvocation.MyCommand.ScriptBlock.File)"
 
-#write host which script is running
-Write-Host "Running $($MyInvocation.MyCommand.Name) as $($MyInvocation.MyCommand.ScriptBlock.File) with arguments $($MyInvocation.UnboundArguments)"
+    #elavate to admin if not already
+    #region mainloop
+    if (-not (ISElevated)){
+        write-host -ForegroundColor Red "Script was started without elevation. Restart with elevation!"
+        Start-Sleep -second 10
+        exit
+    }
 
-#elavate to admin if not already
-Elevate
+    Initialize-Config
+    
+    #get age of scripts in seconds
+    $script=Get-Item $MyInvocation.MyCommand.ScriptBlock.File
+    $scriptage = (get-date) - $script.LastWriteTime
+    #if scriptage is greate than 1 hour, update script
+    if ($scriptage.TotalHours -gt 1) {
+        Write-Host "Script is older than 1 hour. Updating script"
+        $scriptpath = $script.FullName
+        $arguments = "-command irm toolbox.cloudfactory.dk | iex"
+        Start-Process powershell -Verb runAs -ArgumentList $arguments
+        exit
+    }
 
-Initialize-Config
-
-switch ($scriptaction) {
-    Monitor-RDS {
-        if (ISElevated){
+    switch ($scriptaction) {
+        Monitor-RDS {
             Monitor-RDS
         }
-        else{
-            #write to log file that the script was started without elevation
-            $Logfilepath = Join-Path -Path $global:config.Logfolder -ChildPath "Errors.csv"
-            [pscustomobject]@{
-                Datetime = get-date
-                Error = "Script was started without elevation"
-            }| export-csv  $Logfilepath -NoTypeInformation -Append  
-            exit
-        }
-    }
-    Default {
-        while ($true) {
-            Write-Output "Current Config:`n $($global:config|out-string)"
-            try {
-        
-                
+        Default {
+            
+            while ($true) {
+                Write-Output "Current Config:`n $($global:config|out-string)"
+
                 $Action = Select-FromStringArray -title "Choose Action" -options @(
                     "Monitor-RDS"
-                    "Set-LogFolder"
+                    "Update-Toolbox"
                     "Exit"
         
                 )
                 $ActionSB = ([scriptblock]::Create($action))
                 Invoke-Command -ScriptBlock $ActionSB
+
             }
-            catch {
-                Write-Warning $_ | Out-String
-            }
+
         }
 
     }
 
 }
+catch {
+    try {
+        $_ | Out-String 
+
+        $_ | Out-String | Out-File -FilePath $global:config.ErrorLogPath -Append
+    }
+    catch {}
+
+    #pause if script is interactive
+    if (ISInteractive) {
+        pause
+    }
 
 
+}
 
 #endregion
