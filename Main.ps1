@@ -145,16 +145,16 @@ function Get-RDPSessions {
     #test
     
     #threshold in ms for application response time to be considered slow
-    $SlowApplicationResponsTime=500
+    $SlowApplicationResponsTime = 500
     #threshold in ms for general response time to be considered slow. This is used to determine if the server is overloaded
-    $GeneralSlowResponsTime=150
+    $GeneralSlowResponsTime = 150
 
-    [int]$ServerCPUUtil=$PerformanceData.CounterSamples | ? path -match "% Processor Time" | sort cookedvalue -Descending | select -first 1 | select -ExpandProperty CookedValue
+    [int]$ServerCPUUtil = $PerformanceData.CounterSamples | ? path -match "% Processor Time" | sort cookedvalue -Descending | select -first 1 | select -ExpandProperty CookedValue
     #$session = $sessions | ? username -eq "laajadmin"
     foreach ($session in $sessions | ? state -eq "active" ) {
        
         #region App Responsetime
-        $SlowApplicationCount=$PerformanceData.CounterSamples | ? path -match "user input delay per process" | ? cookedvalue -gt $GeneralSlowResponsTime  | measure |select -ExpandProperty count
+        $SlowApplicationCount = $PerformanceData.CounterSamples | ? path -match "user input delay per process" | ? cookedvalue -gt $GeneralSlowResponsTime  | measure | select -ExpandProperty count
         
         $AvgAppResponseTime = $PerformanceData.CounterSamples | ? path -match "user input delay per process" | ? instanceName -match "^$($session.Id)" | ? cookedvalue -gt 0 | measure -Average -Property cookedvalue | select -ExpandProperty Average
         $session.AvgAppResponseTime = $AvgAppResponseTime
@@ -244,28 +244,97 @@ function Select-FromStringArray {
 
 }
 
-function Monitor-RDS{
+function Monitor-RDS {
+    $Logfilepath = Join-Path -Path $global:config.Logfolder -ChildPath "Bottlenecks.csv"
+    Write-Host -ForegroundColor Green 
     while ($true) {
-
+        
         #Get-RDPSessions -MeasureTimeSeconds 5 |select * -ExcludeProperty SessionEvents| ft * 
-        write-progress -activity "Analyzing Performance" -status (get-date)
+        write-progress -id 0 -activity "Analyzing Performance. Let the script run in background." -status (get-date)
+        write-progress -id 1 -activity "Outputting to $Logfilepath"
+        
         $Bottlenecks = Get-RDPSessions -MeasureTimeSeconds 1 | ? state -eq "active"
         $Bottlenecks | ft -AutoSize Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime
-        $Bottlenecks | ? bottleneck -ne "none"| export-csv "$($PSScriptRoot)\Bottlenecks.csv" -NoTypeInformation -Append
+        $Bottlenecks | ? bottleneck -ne "none" | export-csv  $Logfilepath -NoTypeInformation -Append
     }
     
 }
+Function Select-FolderDialog {
+    param([string]$Description = "Select Folder", [string]$RootFolder = "Desktop")
+    try {
+        [System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") |
+        Out-Null     
+
+        $objForm = New-Object System.Windows.Forms.FolderBrowserDialog
+        $objForm.Rootfolder = $RootFolder
+        $objForm.Description = $Description
+        $Show = $objForm.ShowDialog()
+        If ($Show -eq "OK") {
+            Return $objForm.SelectedPath
+        }
+        Else {
+            Write-Error "Operation cancelled by user."
+        }
+    }
+    catch {
+        do {
+            Write-Host "An error occurred while trying to select a folder. Please enter a valid path."
+            $path = Read-Host "Enter the path"
+        } while (!(Test-Path -Path $path))
+        Return $path
+    }
+}
+
+function Set-LogFolder {
+    
+    param(
+        [string]$newLogFolder = (Select-FolderDialog)
+    )
+    $ErrorActionPreference = "Stop"
+    if (!(Test-Path -Path $newLogFolder)) {
+        New-Item -ItemType Directory -Force -Path $newLogFolder
+    }
+    $global:config.Logfolder = $newLogFolder
+    $global:config | Export-Clixml -Path $configPath
+}
+
+function Initialize-Config {
+    
+    $configPath = Join-Path -Path $env:APPDATA -ChildPath "CloudFactoryToolbox.xml"
+    $ErrorActionPreference = "Stop"
+    if (Test-Path -Path $configPath) {
+        $global:config = Import-Clixml -Path $configPath
+    }
+    else {
+        [pscustomobject]$global:config = @{
+            Logfolder = "$($env:USERPROFILE)\desktop"
+        }
+        $global:config | Export-Clixml -Path $configPath
+    }
+}
+
+
+
 
 
 #endregion
 
+#region mainloop
+
+$ErrorActionPreference = "Stop"
+Initialize-Config
+
 
 
 while ($true) {
+    Write-Output "Current Config:`n $($global:config|out-string)"
     try {
+
+        
         $Action = Select-FromStringArray -title "Choose Action" -options @(
             "Monitor-RDS"
-            
+            "Set-LogFolder"
+            "Exit"
 
         )
         $ActionSB = ([scriptblock]::Create($action))
@@ -275,3 +344,6 @@ while ($true) {
         Write-Warning $_ | Out-String
     }
 }
+
+
+#endregion
