@@ -260,7 +260,7 @@ function Monitor-RDS {
         
         $Bottlenecks = Get-RDPSessions -MeasureTimeSeconds 1 | ? state -eq "active"
         $Bottlenecks | ft -AutoSize Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime
-        $Bottlenecks | ? bottleneck -ne "none" | export-csv  $Logfilepath -NoTypeInformation -Append
+        $Bottlenecks | ? bottleneck -ne "none" |select Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime| export-csv  $Logfilepath -NoTypeInformation -Append
     }
     
 }
