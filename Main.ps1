@@ -368,7 +368,7 @@ try {
     #check if a new version of the script is available
     try {
         $localscript = Get-Item -Path $MyInvocation.MyCommand.ScriptBlock.File
-        $localscriptcontent = Get-Content -Path $localscript.FullName
+        $localscriptcontent = Get-Content -Path $localscript.FullName -Raw
         $remotescriptcontent = Invoke-RestMethod "https://raw.githubusercontent.com/cloudfactorydk/PSToolbox/main/Main.ps1"
         if ($localscriptcontent -ne $remotescriptcontent) {
             write-host -ForegroundColor Blue "New version of script is available."
