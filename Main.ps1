@@ -250,8 +250,8 @@ function Select-FromStringArray {
 }
 
 function Monitor-RDS {
-    $Logfilepath = Join-Path -Path $global:config.Logfolder -ChildPath "Bottlenecks.csv"
-    Write-Host -ForegroundColor Green 
+    $Logfilepath = Join-Path -Path $global:config.Logfolder -ChildPath "Monitor-RDS.csv"
+    
     while ($true) {
         
         #Get-RDPSessions -MeasureTimeSeconds 5 |select * -ExcludeProperty SessionEvents| ft * 
@@ -259,7 +259,9 @@ function Monitor-RDS {
         write-progress -id 1 -activity "Outputting to $Logfilepath"
         
         $Bottlenecks = Get-RDPSessions -MeasureTimeSeconds 1 | ? state -eq "active"
-        $Bottlenecks | ft -AutoSize Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime
+        if (ISInteractive) {
+            $Bottlenecks | ft -AutoSize Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime
+        }
         $Bottlenecks | ? bottleneck -ne "none" | select Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime | export-csv  $Logfilepath -NoTypeInformation -Append
     }
     
@@ -292,14 +294,8 @@ function ISInteractive {
     [System.Environment]::UserInteractive
 }
 function Update-Toolbox {
-    #if scriptage is greate than 1 hour, update script
-    
-    Write-Host "Script is older than 1 hour. Updating script"
-    $scriptpath = $script.FullName
-    $arguments = "-command irm toolbox.cloudfactory.dk | iex"
-    Start-Process powershell -Verb runAs -ArgumentList $arguments
+    Invoke-RestMethod toolbox.cloudfactory.dk | invoke-expression
     exit
-    
 }
 
 function Create-ScheduledTask {
