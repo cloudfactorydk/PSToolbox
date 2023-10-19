@@ -324,12 +324,13 @@ function Initialize-Config {
 }
 
 function Test-Elevated {
-    # function to test if the script is running as admin
-    if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-        Write-Warning "You do not have Administrator rights to run this script!`nPlease re-run this script as an Administrator!"
-        $arguments = "-command irm toolbox.cloudfactory.dk | iex"
-        Start-Process powershell -Verb runAs -ArgumentList $arguments
-        Break
+    #check if script is running elevated. Elevate if not.
+    if (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')) {
+        if ([int](Get-CimInstance -Class Win32_OperatingSystem | Select-Object -ExpandProperty BuildNumber) -ge 6000) {
+            $CommandLine = "-File `"" + $MyInvocation.MyCommand.Path + "`" " + $MyInvocation.UnboundArguments
+            Start-Process -FilePath PowerShell.exe -Verb Runas -ArgumentList $CommandLine
+            Exit
+        }
     }
 }
 
