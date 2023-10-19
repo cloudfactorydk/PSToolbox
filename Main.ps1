@@ -260,7 +260,7 @@ function Monitor-RDS {
         
         $Bottlenecks = Get-RDPSessions -MeasureTimeSeconds 1 | ? state -eq "active"
         $Bottlenecks | ft -AutoSize Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime
-        $Bottlenecks | ? bottleneck -ne "none" |select Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime| export-csv  $Logfilepath -NoTypeInformation -Append
+        $Bottlenecks | ? bottleneck -ne "none" | select Datetime, username, RemoteIP, BottleNeck, DroppedFramesServer, DroppedFramesClient, DroppedFramesNetwork, CurrentTCPRTT, AvgAppResponseTime, WorstAPPName, WorstAPPResponseTime | export-csv  $Logfilepath -NoTypeInformation -Append
     }
     
 }
@@ -365,18 +365,7 @@ try {
 
     Initialize-Config
 
-    #check if a new version of the script is available
-    try {
-        $localscript = Get-Item -Path $MyInvocation.MyCommand.ScriptBlock.File
-        $localscriptcontent = Get-Content -Path $localscript.FullName -Raw
-        $remotescriptcontent = Invoke-RestMethod "https://raw.githubusercontent.com/cloudfactorydk/PSToolbox/main/Main.ps1"
-        if ($localscriptcontent -ne $remotescriptcontent) {
-            write-host -ForegroundColor Blue "New version of script is available."
-        }
-    }
-    catch {
-        Write-Warning "Can't check for new version of script."
-    }
+
 
 
 
@@ -385,9 +374,35 @@ try {
             Monitor-RDS
         }
         Default {
-            
+            #region check if a new version of the script is available
+            try {
+                $localscript = Get-Item -Path $MyInvocation.MyCommand.ScriptBlock.File
+                $localscriptcontent = Get-Content -Path $localscript.FullName -Raw
+                $remotescriptcontent = Invoke-RestMethod "https://raw.githubusercontent.com/cloudfactorydk/PSToolbox/main/Main.ps1"
+                if ($localscriptcontent -ne $remotescriptcontent) {
+                    write-host -ForegroundColor Blue "New version of script is available."
+                }
+            }
+            catch {
+                Write-Warning "Can't check for new version of script."
+            }
+            #endregion
+
+
+
+            #region menuloop
             while ($true) {
                 Write-Output "Current Config:`n $($global:config|out-string)"
+
+                #show running scheduled tasks
+                $ScheduledTasks = Get-ScheduledTask -TaskName "CloudFactoryToolboxTask-*" -ErrorAction SilentlyContinue
+                if ($ScheduledTasks) {
+                    Write-Host "Running Scheduled Tasks:"
+                    $ScheduledTasks | ft TaskName, State, LastRunTime, NextRunTime
+                }
+                else {
+                    Write-Host "No Scheduled Tasks are running"
+                }
 
                 $Action = Select-FromStringArray -title "Choose Action" -options @(
                     "Start-Monitor-RDS" 
@@ -400,6 +415,8 @@ try {
                 Invoke-Command -ScriptBlock $ActionSB
 
             }
+
+            #endregion
 
         }
 
