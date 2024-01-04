@@ -2,7 +2,7 @@
 # function to test if the script is running as admin
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     Write-Warning "You do not have Administrator rights to run this script!`nPlease re-run this script as an Administrator!"
-    $arguments = "-command irm toolbox.cloudfactory.dk | iex"
+    $arguments = "-command irm PSToolbox.cloudfactory.dk | iex"
     Start-Process powershell -Verb runAs -ArgumentList $arguments
     Break
 }
