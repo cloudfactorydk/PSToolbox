@@ -82,11 +82,18 @@ function Get-RDPSessions {
             $session.SessionNameRDP = $session.SessionName -replace "rdp-tcp#", ""
             
         }
+        #TODO: nogengange fejler den her. den kører if statement selvom user er tom wrap i try.
         if ($user) {
+            try{
             $idletime = $user.Substring(54, 9).Trim()
             $session.IdleTime = $idletime
             $session.Idle = $idletime -eq "\."
             $session.LogonTime = get-date ($user.Substring(65, 16).Trim())
+        }
+        catch {
+            
+        }
+
         }
 
         $SessionEvents = $events | ? TimeCreated -gt $session.LogonTime | ? { $_.message -match "Session ID: $($session.Id)" -or $_.message -match "Session $($session.Id) " } | sort timecreated -Descending 
