@@ -1,16 +1,15 @@
 param(
-    [ValidateSet( "Interactive", "Monitor-RDS")]
+    [ValidateSet("Interactive", "Monitor-RDS")]
     [string]$scriptaction = "Interactive"
 )
 
 #region functions
 
-
-
 function Get-RDPSessions {
     param(
         [int]$MeasureTimeSeconds = 1
     )
+
     #region Get RDPSessions
     $DisconnectedReasonCodes = @{
         0   = "No additional information is available."
@@ -40,7 +39,7 @@ function Get-RDPSessions {
         267 = "An access denied error was received while creating a registry key for the license store."
         768 = "Invalid credentials were encountered."
     }
-    
+
     $events = Get-WinEvent -FilterHashtable @{LogName = 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational' }
     $NetTCPSessions = Get-NetTCPConnection -State Established -LocalPort 3389
     $sessions = qwinsta | ? { $_ -notmatch '^ SESSIONNAME' } | % {
@@ -75,6 +74,7 @@ function Get-RDPSessions {
             BottleNeck               = $null
         }
     }
+
     #Merge data from qwinsta and quser
     foreach ($session in ($sessions | ? username)) {
         $user = quser | ? { $_ -match $session.Username }
@@ -82,7 +82,7 @@ function Get-RDPSessions {
             $session.SessionNameRDP = $session.SessionName -replace "rdp-tcp#", ""
             
         }
-        #TODO: nogengange fejler den her. den kører if statement selvom user er tom wrap i try.
+        #TODO: nogengange fejler den her. den kører if statement selvom user er tom. wrap i try.
         if ($user) {
             try{
             $idletime = $user.Substring(54, 9).Trim()
@@ -134,8 +134,11 @@ function Get-RDPSessions {
     #endregion
 
     #region Performance Measurement
-    #create variable with all performancecounter instances with the names from the list below
-    $Counters = @(
+    # Detect system language
+    $Language = (Get-Culture).Name
+
+    # Define counters for English
+    $Counters_EN = @(
         "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Server Resources"
         "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Network Resources"
         "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Client Resources"
@@ -143,35 +146,83 @@ function Get-RDPSessions {
         "\RemoteFX Graphics(*)\Output Frames/Second"
         "\RemoteFX Network(*)\Current TCP RTT"
         "\RemoteFX Network(*)\Current UDP RTT"
-        #"\User Input Delay per Session(*)\Max Input Delay"
         "\User Input Delay per Process(*)\Max Input Delay"
         "\Processor(_Total)\% Processor Time"
     )
+
+    # Define counters for Danish (you need to find the correct Danish translations)
+    $Counters_DA = @(
+        "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige serverressourcer"
+        "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige netværksressourcer"
+        "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige klientressourcer"
+        "\RemoteFX-grafik(*)\Gennemsnitlig kodningstid"
+        "\RemoteFX-grafik(*)\Outputrammer/sekund"
+        "\RemoteFX-netværk(*)\Aktuel RTT for TCP"
+        "\RemoteFX-netværk(*)\Aktuel RTT for UDP"
+        "\Forsinkelse af brugerinput pr. proces(*)\Maks. inputforsinkelse"
+        "\Processoroplysninger(*)\% processortid"
+    )
+
+    # Define regex patterns for language specific paths
+    $Patterns_EN = @{
+        CPUUtil = "% Processor Time"
+        UserInputDelay = "user input delay per process"
+        RemoteFX = "RemoteFX"
+        TCPRTT = "current tcp rtt"
+        InsufficientServerResources = "insufficient server resources"
+        InsufficientNetworkResources = "insufficient network resources"
+        InsufficientClientResources = "insufficient client resources"
+    }
+
+    $Patterns_DA = @{
+        CPUUtil = "% processortid"
+        UserInputDelay = "Forsinkelse af brugerinput pr. proces"
+        RemoteFX = "RemoteFX"
+        TCPRTT = "Aktuel RTT for TCP"
+        InsufficientServerResources = "utilstrækkelige serverressourcer"
+        InsufficientNetworkResources = "utilstrækkelige netværksressourcer"
+        InsufficientClientResources = "utilstrækkelige klientressourcer"
+    }
+
+    # Select the correct patterns based on the language
+    switch ($Language) {
+        "en-US" { $Patterns = $Patterns_EN }
+        "da-DK" { $Patterns = $Patterns_DA }
+        default { throw "Language not supported: $Language" }  # Default to English if language is not supported
+    }
+
+    # Select the correct counters based on the language
+    switch ($Language) {
+        "en-US" { $Counters = $Counters_EN }
+        "da-DK" { $Counters = $Counters_DA }
+        default { throw "Language not supported: $Language" }  # Default to English if language is not supported
+    }
+    
     try {
         $PerformanceData = Get-Counter -ErrorAction Stop -Counter $Counters -MaxSamples $MeasureTimeSeconds -SampleInterval 1
    
     }
+
     catch {
         continue
     }
-    #test
     
     #threshold in ms for application response time to be considered slow
     $SlowApplicationResponsTime = 500
     #threshold in ms for general response time to be considered slow. This is used to determine if the server is overloaded
     $GeneralSlowResponsTime = 150
 
-    [int]$ServerCPUUtil = $PerformanceData.CounterSamples | ? path -match "% Processor Time" | sort cookedvalue -Descending | select -first 1 | select -ExpandProperty CookedValue
+    [int]$ServerCPUUtil = $PerformanceData.CounterSamples | ? path -match $Patterns.CPUUtil | sort cookedvalue -Descending | select -first 1 | select -ExpandProperty CookedValue
     #$session = $sessions | ? username -eq "laajadmin"
     foreach ($session in $sessions | ? state -eq "active" ) {
        
         #region App Responsetime
-        $SlowApplicationCount = $PerformanceData.CounterSamples | ? path -match "user input delay per process" | ? cookedvalue -gt $GeneralSlowResponsTime  | measure | select -ExpandProperty count
+        $SlowApplicationCount = $PerformanceData.CounterSamples | ? path -match $Patterns.UserInputDelay | ? cookedvalue -gt $GeneralSlowResponsTime  | measure | select -ExpandProperty count
         
-        $AvgAppResponseTime = $PerformanceData.CounterSamples | ? path -match "user input delay per process" | ? instanceName -match "^$($session.Id)" | ? cookedvalue -gt 0 | measure -Average -Property cookedvalue | select -ExpandProperty Average
+        $AvgAppResponseTime = $PerformanceData.CounterSamples | ? path -match $Patterns.UserInputDelay | ? instanceName -match "^$($session.Id)" | ? cookedvalue -gt 0 | measure -Average -Property cookedvalue | select -ExpandProperty Average
         $session.AvgAppResponseTime = $AvgAppResponseTime
             
-        $WorstAPP = $PerformanceData.CounterSamples | ? path -match "user input delay per process" | ? instanceName -match "^$($session.Id)" | sort cookedvalue -Descending | select -first 1
+        $WorstAPP = $PerformanceData.CounterSamples | ? path -match $Patterns.UserInputDelay | ? instanceName -match "^$($session.Id)" | sort cookedvalue -Descending | select -first 1
             
         $null = $WorstAPP.instancename -match "<(.+?)>"
         $session.WorstAPPName = $matches[1]
@@ -179,12 +230,12 @@ function Get-RDPSessions {
         #endregion
 
         #region Resources
-        $SessionRemoteFXCounters = $PerformanceData.CounterSamples | ? path -match "RemoteFX" | ? path -match "\(rdp-tcp $($session.SessionNameRDP)\)"
+        $SessionRemoteFXCounters = $PerformanceData.CounterSamples | ? path -match $Patterns.RemoteFX | ? path -match "\(rdp-tcp $($session.SessionNameRDP)\)"
        
-        [int]$DroppedFramesServer = $SessionRemoteFXCounters | ? path -match "insufficient server resources" | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
-        [int]$DroppedFramesClient = $SessionRemoteFXCounters | ? path -match "insufficient client resources" | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
-        [int]$DroppedFramesNetwork = $SessionRemoteFXCounters | ? path -match "insufficient network resources" | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
-        $CurrentTCPRTT = $SessionRemoteFXCounters | ? path -match "current tcp rtt" | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
+        [int]$DroppedFramesServer = $SessionRemoteFXCounters | ? path -match $Patterns.InsufficientServerResources | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
+        [int]$DroppedFramesClient = $SessionRemoteFXCounters | ? path -match $Patterns.InsufficientClientResources | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
+        [int]$DroppedFramesNetwork = $SessionRemoteFXCounters | ? path -match $Patterns.InsufficientNetworkResources | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
+        $CurrentTCPRTT = $SessionRemoteFXCounters | ? path -match $Patterns.TCPRTT | sort CookedValue -desc | select -first 1 | select -ExpandProperty CookedValue
         
         $session.DroppedFramesServer = $DroppedFramesServer
         $session.DroppedFramesClient = $DroppedFramesClient
@@ -218,11 +269,9 @@ function Get-RDPSessions {
         }
         $session.BottleNeck = $BottleNeck
         
-        #endregion
-
-
-        
+        #endregion        
     }
+
     # User Input Delay per Session(*)\* Input Delay
     
 
@@ -231,6 +280,7 @@ function Get-RDPSessions {
 
     return $sessions
 }
+
 function Select-FromStringArray {
     param(
         $title = "please select",
@@ -367,10 +417,6 @@ try {
     }
 
     Initialize-Config
-
-
-
-
 
     switch ($scriptaction) {
         Monitor-RDS {
