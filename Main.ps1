@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Interactive", "Monitor-RDS","PingTool")]
+    [ValidateSet("Interactive", "Monitor-RDS", "PingTool")]
     [string]$scriptaction = "Interactive"
 )
 
@@ -85,15 +85,15 @@ function Get-RDPSessions {
         }
         #TODO: nogengange fejler den her. den kører if statement selvom user er tom. wrap i try.
         if ($user) {
-            try{
-            $idletime = $user.Substring(54, 9).Trim()
-            $session.IdleTime = $idletime
-            $session.Idle = $idletime -eq "\."
-            $session.LogonTime = get-date ($user.Substring(65, 16).Trim())
-        }
-        catch {
+            try {
+                $idletime = $user.Substring(54, 9).Trim()
+                $session.IdleTime = $idletime
+                $session.Idle = $idletime -eq "\."
+                $session.LogonTime = get-date ($user.Substring(65, 16).Trim())
+            }
+            catch {
             
-        }
+            }
 
         }
 
@@ -166,23 +166,23 @@ function Get-RDPSessions {
 
     # Define regex patterns for language specific paths
     $Patterns_EN = @{
-        CPUUtil = "% Processor Time"
-        UserInputDelay = "user input delay per process"
-        RemoteFX = "RemoteFX"
-        TCPRTT = "current tcp rtt"
-        InsufficientServerResources = "insufficient server resources"
+        CPUUtil                      = "% Processor Time"
+        UserInputDelay               = "user input delay per process"
+        RemoteFX                     = "RemoteFX"
+        TCPRTT                       = "current tcp rtt"
+        InsufficientServerResources  = "insufficient server resources"
         InsufficientNetworkResources = "insufficient network resources"
-        InsufficientClientResources = "insufficient client resources"
+        InsufficientClientResources  = "insufficient client resources"
     }
 
     $Patterns_DA = @{
-        CPUUtil = "% processortid"
-        UserInputDelay = "Forsinkelse af brugerinput pr. proces"
-        RemoteFX = "RemoteFX"
-        TCPRTT = "Aktuel RTT for TCP"
-        InsufficientServerResources = "utilstrækkelige serverressourcer"
+        CPUUtil                      = "% processortid"
+        UserInputDelay               = "Forsinkelse af brugerinput pr. proces"
+        RemoteFX                     = "RemoteFX"
+        TCPRTT                       = "Aktuel RTT for TCP"
+        InsufficientServerResources  = "utilstrækkelige serverressourcer"
         InsufficientNetworkResources = "utilstrækkelige netværksressourcer"
-        InsufficientClientResources = "utilstrækkelige klientressourcer"
+        InsufficientClientResources  = "utilstrækkelige klientressourcer"
     }
 
     # Select the correct patterns based on the language
@@ -720,7 +720,7 @@ function Analyze-PingData {
 
     # Write updated data back to CSV
     $existingData | sort DateTime, SourceComputer, SourceIP, ComputerName | Export-Csv -Path $DatabasePath -Delimiter ";" -NoTypeInformation
-
+    Copy-Item $DatabasePath -Destination "$($DatabasePath -replace ".csv","-COPY.csv")" -Force
 
 }
 
@@ -935,12 +935,12 @@ function Get-DefaultGateway {
     Sort-Object metric1 | select -first 1 -ExpandProperty nexthop
 }
 function PingTool {
-    $pings = @(
-        "1.1.1.1"
-        "1.0.0.1"
-        "8.8.8.8"
-        "8.8.4.4"
+    param(
+        $pings,
+        $interval = 500,
+        $count = 100 #count needs to be high for the percent calculation to be accurate. 100+ is good.
     )
+
 
     #$pings += (Ping-IPRange -StartAddress 10.245.100.1 -EndAddress 10.245.100.254).IPAddress.IPAddressToString
     #$pings += (Ping-IPRange -StartAddress 10.245.110.1 -EndAddress 10.245.110.254).IPAddress.IPAddressToString
@@ -959,8 +959,7 @@ function PingTool {
     Write-Output "Pinging following IPs"
     $pings
     get-job | Stop-Job | Remove-Job
-    $interval = 500
-    $count = 100 #count needs to be high for the percent calculation to be accurate. 100+ is good.
+
     New-IntervalPingJob -ComputerNames $pings -Interval $interval -Count $count -LogFolder "C:\CloudFactoryToolbox\Logs" -RestartJobs $true
     while ($true) {
         #get-job
@@ -1073,18 +1072,76 @@ function Select-FromStringArray {
 
 }
 
+function Out-Log {
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [string]$Message,
+        [switch]$ErrorLog
+    )
+    if ($ErrorLog) {
+        $LogPath = $global:config.ErrorLogPath
+    }
+    else {
+        $LogPath = $global:config.OutputLogPath
+    }
 
+    $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $logMessage = "$timestamp - $Message"
+    Write-Host $logMessage
+    $logMessage | Out-File -FilePath $LogPath -Append
+}
 function Initialize-Config {
     $Rootfolder = "C:\CloudFactoryToolbox"
     $Logfolder = join-path -Path $Rootfolder -ChildPath "Logs"
-    [pscustomobject]$global:config = @{
-        Logfolder    = $Logfolder
-        ErrorLogPath = join-path -Path $Logfolder -ChildPath "Errors.log"
+    $configFilePath = Join-Path -Path $Rootfolder -ChildPath "config.json"
+    $ErrorLogPath = join-path -Path $Logfolder -ChildPath "Errors.log"
+    $OutputLogPath = join-path -Path $Logfolder -ChildPath "Output.log"
+
+    #load or create config.
+    if (Test-Path -Path $configFilePath) {
+        try {
+            #try to load config file.
+            $content = Get-Content -Path $configFilePath -Raw
+            $global:config = $content | ConvertFrom-Json
+        }
+        catch {
+            "Error loading config config file." | Out-File -FilePath $ErrorLogPath -Append
+            $_ | Out-String | Out-File -FilePath $ErrorLogPath -Append
+
+            #if an error happens, create a new config object.
+            $global:config = [pscustomobject]@{}
+        }
+        
     }
+    else {
+        $global:config = [pscustomobject]@{}
+    }
+
     #create logfolder if it doesnt exist. including parent folders
     if (!(Test-Path -Path $Logfolder)) {
         New-Item -ItemType Directory -Force -Path $Logfolder
     } 
+
+    #add config properties if they dont exist. For backward comapatibility and to make sure to fix any user errors.
+    $properties = @{    
+        Logfolder     = $Logfolder
+        ErrorLogPath  = $ErrorLogPath
+        OutputLogPath = $OutputLogPath
+        PingIPs       = @(
+            "1.1.1.1"
+            "1.0.0.1"
+            "8.8.8.8"
+            "8.8.4.4"
+        )
+    }
+    foreach ($property in $properties.keys) {
+        if (-not $global:config.$property) {
+            $global:config | Add-Member -MemberType NoteProperty -Name $property -Value $properties[$property]      
+        }
+    }
+
+    #save config
+    $global:config | ConvertTo-Json -depth 99 | Set-Content -Path $configFilePath -Force -Confirm:$false
 }
 
 function ISElevated {
@@ -1169,22 +1226,22 @@ function StopAndDeleteTask {
 
 
 function Start-Monitor-RDS {
-    $Action="Monitor-RDS"
+    $Action = "Monitor-RDS"
     CreateAndStartTask -ScriptAction $Action
 }
 
 function Stop-Monitor-RDS {
-    $Action="Monitor-RDS"
+    $Action = "Monitor-RDS"
     StopAndDeleteTask -ScriptAction $Action
 }
 
 function Start-PingTool {
-    $Action="PingTool"
+    $Action = "PingTool"
     CreateAndStartTask -ScriptAction $Action
 }
 
 function Stop-PingTool {
-    $Action="PingTool"
+    $Action = "PingTool"
     StopAndDeleteTask -ScriptAction $Action
 }
 #endregion Scheduled tasks
@@ -1205,12 +1262,16 @@ try {
     }
 
     Initialize-Config
+    "Config loaded" | Out-Log
+    $Global:config | ConvertTo-Json | Out-Log
 
     switch ($scriptaction) {
         PingTool {
-            PingTool
+            "Starting Ping" | Out-Log
+            PingTool -pings $global:config.PingIPs
         }
         Monitor-RDS {
+            "Starting RDS-Monitor" | Out-Log
             Monitor-RDS
         }
         Default {
@@ -1232,7 +1293,7 @@ try {
 
             #region menuloop
             while ($true) {
-                Write-Output "Current Config:`n $($global:config|out-string)"
+                Write-Output "Current Config:`n $($global:config|Format-List|out-string)"
 
                 #show running scheduled tasks
                 $ScheduledTasks = Get-ScheduledTask -TaskName "CloudFactoryToolboxTask-*" -ErrorAction SilentlyContinue
