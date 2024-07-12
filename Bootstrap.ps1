@@ -18,11 +18,11 @@ if (!(Test-Path $Rootfolder)) {
 Invoke-RestMethod "https://raw.githubusercontent.com/cloudfactorydk/PSToolbox/main/Main.ps1" | Out-File -Encoding utf8 -FilePath $scriptPath -Force
 # start script elevated
 
-$arguments="-file $scriptPath -executionpolicy bypass"
+$arguments="-NoExit -file $scriptPath -executionpolicy bypass"
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Start-Process powershell -runAs -NoExit -ArgumentList $arguments 
+    Start-Process powershell -runAs -ArgumentList $arguments 
 }
 else {
-    Start-Process powershell -NoExit -ArgumentList $arguments 
+    Start-Process powershell -ArgumentList $arguments 
 }
 
