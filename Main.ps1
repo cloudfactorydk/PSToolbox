@@ -720,7 +720,7 @@ function Analyze-PingData {
 
     # Write updated data back to CSV
     $existingData | sort DateTime, SourceComputer, SourceIP, ComputerName | Export-Csv -Path $DatabasePath -Delimiter ";" -NoTypeInformation
-    Copy-Item $DatabasePath -Destination "$($DatabasePath -replace ".csv","-COPY.csv")" -Force
+    Copy-Item $DatabasePath -Destination "$($DatabasePath -replace ".csv","-COPY.csv")" -Force -ErrorAction SilentlyContinue
 
 }
 
