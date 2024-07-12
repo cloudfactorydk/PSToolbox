@@ -20,9 +20,9 @@ Invoke-RestMethod "https://raw.githubusercontent.com/cloudfactorydk/PSToolbox/ma
 
 $arguments="-file $scriptPath -executionpolicy bypass"
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Start-Process powershell -runAs -ArgumentList $arguments
+    Start-Process powershell -runAs -ArgumentList $arguments -NoExit
 }
 else {
-    Start-Process powershell -ArgumentList $arguments
+    Start-Process powershell -ArgumentList $arguments -NoExit
 }
 
