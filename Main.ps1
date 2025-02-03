@@ -1,7 +1,13 @@
+# Script parameters
 param(
     [ValidateSet("Interactive", "Monitor-RDS", "PingTool")]
     [string]$scriptaction = "Interactive"
 )
+
+# Define default paths at script level (these must be set before any function definitions)
+$script:DefaultRootFolder = "C:\CloudFactoryToolbox"
+$script:DefaultLogFolder = Join-Path -Path $script:DefaultRootFolder -ChildPath "Logs"
+$script:DefaultErrorLogPath = Join-Path -Path $script:DefaultLogFolder -ChildPath "Errors.log"
 
 #region functions
 
@@ -135,37 +141,133 @@ function Get-RDPSessions {
     #endregion
 
     #region Performance Measurement
-    # Detect system language
-    $Language = (Get-Culture).Name
+    # Define performance counter mappings with all possible names for each metric
+    $script:PerformanceCounterMappings = @{
+        InsufficientServerResources = @{
+            Description = "Frames Skipped/Second - Insufficient Server Resources"
+            PossibleCounters = @(
+                "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Server Resources"
+                "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige serverressourcer"
+            )
+        }
+        InsufficientNetworkResources = @{
+            Description = "Frames Skipped/Second - Insufficient Network Resources"
+            PossibleCounters = @(
+                "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Network Resources"
+                "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige netværksressourcer"
+            )
+        }
+        InsufficientClientResources = @{
+            Description = "Frames Skipped/Second - Insufficient Client Resources"
+            PossibleCounters = @(
+                "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Client Resources"
+                "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige klientressourcer"
+            )
+        }
+        AverageEncodingTime = @{
+            Description = "Average Encoding Time"
+            PossibleCounters = @(
+                "\RemoteFX Graphics(*)\Average Encoding Time"
+                "\RemoteFX-grafik(*)\Gennemsnitlig kodningstid"
+            )
+        }
+        OutputFramesPerSecond = @{
+            Description = "Output Frames/Second"
+            PossibleCounters = @(
+                "\RemoteFX Graphics(*)\Output Frames/Second"
+                "\RemoteFX-grafik(*)\Outputrammer/sekund"
+            )
+        }
+        CurrentTCPRTT = @{
+            Description = "Current TCP RTT"
+            PossibleCounters = @(
+                "\RemoteFX Network(*)\Current TCP RTT"
+                "\RemoteFX-netværk(*)\Aktuel RTT for TCP"
+            )
+        }
+        CurrentUDPRTT = @{
+            Description = "Current UDP RTT"
+            PossibleCounters = @(
+                "\RemoteFX Network(*)\Current UDP RTT"
+                "\RemoteFX-netværk(*)\Aktuel RTT for UDP"
+            )
+        }
+        MaxInputDelay = @{
+            Description = "Max Input Delay"
+            PossibleCounters = @(
+                "\User Input Delay per Process(*)\Max Input Delay"
+                "\Forsinkelse af brugerinput pr. proces(*)\Maks. inputforsinkelse"
+            )
+        }
+        ProcessorTime = @{
+            Description = "% Processor Time"
+            PossibleCounters = @(
+                "\Processor(_Total)\% Processor Time"
+                "\Processor Information(_Total)\% Processor Time"
+                "\Processoroplysninger(_Total)\% processortid"
+            )
+        }
+    }
 
-    # Define counters for English
-    $Counters_EN = @(
-        "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Server Resources"
-        "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Network Resources"
-        "\RemoteFX Graphics(*)\Frames Skipped/Second - Insufficient Client Resources"
-        "\RemoteFX Graphics(*)\Average Encoding Time"
-        "\RemoteFX Graphics(*)\Output Frames/Second"
-        "\RemoteFX Network(*)\Current TCP RTT"
-        "\RemoteFX Network(*)\Current UDP RTT"
-        "\User Input Delay per Process(*)\Max Input Delay"
-        "\Processor(_Total)\% Processor Time"
-    )
+    function Initialize-PerformanceCounters {
+        # Check if we have cached counter mappings in config
+        if ($global:config.PerformanceCounters) {
+            Write-Verbose "Using cached performance counter mappings"
+            return $global:config.PerformanceCounters
+        }
 
-    # Define counters for Danish (you need to find the correct Danish translations)
-    $Counters_DA = @(
-        "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige serverressourcer"
-        "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige netværksressourcer"
-        "\RemoteFX-grafik(*)\Rammer sprunget over/sekund - utilstrækkelige klientressourcer"
-        "\RemoteFX-grafik(*)\Gennemsnitlig kodningstid"
-        "\RemoteFX-grafik(*)\Outputrammer/sekund"
-        "\RemoteFX-netværk(*)\Aktuel RTT for TCP"
-        "\RemoteFX-netværk(*)\Aktuel RTT for UDP"
-        "\Forsinkelse af brugerinput pr. proces(*)\Maks. inputforsinkelse"
-        "\Processoroplysninger(*)\% processortid"
-    )
+        Write-Verbose "Detecting available performance counters..."
+        $workingCounters = @{}
+        $missingCounters = @()
+
+        foreach ($metricName in $script:PerformanceCounterMappings.Keys) {
+            $metric = $script:PerformanceCounterMappings[$metricName]
+            $found = $false
+
+            foreach ($counter in $metric.PossibleCounters) {
+                try {
+                    $null = Get-Counter -Counter $counter -ErrorAction Stop
+                    $workingCounters[$metricName] = @{
+                        Description = $metric.Description
+                        Counter = $counter
+                    }
+                    $found = $true
+                    Write-Verbose "Found working counter for $metricName : $counter"
+                    break
+                }
+                catch {
+                    Write-Verbose "Counter not available: $counter"
+                    continue
+                }
+            }
+
+            if (-not $found) {
+                $missingCounters += $metric.Description
+            }
+        }
+
+        if ($missingCounters.Count -gt 0) {
+            throw "The following performance counters are not available in any language:`n$($missingCounters -join "`n")"
+        }
+
+        # Cache the working counters in config
+        $global:config | Add-Member -MemberType NoteProperty -Name "PerformanceCounters" -Value $workingCounters -Force
+        $global:config | ConvertTo-Json -Depth 99 | Set-Content -Path (Join-Path $script:DefaultRootFolder "config.json") -Force
+
+        return $workingCounters
+    }
+
+    # Initialize performance counters and get the working set
+    try {
+        $Counters = Initialize-PerformanceCounters
+        Write-Verbose "Successfully initialized performance counters"
+    }
+    catch {
+        throw "Failed to initialize performance counters: $($_.Exception.Message)"
+    }
 
     # Define regex patterns for language specific paths
-    $Patterns_EN = @{
+    $Patterns = @{
         CPUUtil                      = "% Processor Time"
         UserInputDelay               = "user input delay per process"
         RemoteFX                     = "RemoteFX"
@@ -175,30 +277,9 @@ function Get-RDPSessions {
         InsufficientClientResources  = "insufficient client resources"
     }
 
-    $Patterns_DA = @{
-        CPUUtil                      = "% processortid"
-        UserInputDelay               = "Forsinkelse af brugerinput pr. proces"
-        RemoteFX                     = "RemoteFX"
-        TCPRTT                       = "Aktuel RTT for TCP"
-        InsufficientServerResources  = "utilstrækkelige serverressourcer"
-        InsufficientNetworkResources = "utilstrækkelige netværksressourcer"
-        InsufficientClientResources  = "utilstrækkelige klientressourcer"
-    }
-
-    # Select the correct patterns based on the language
-    switch ($Language) {
-        "en-US" { $Patterns = $Patterns_EN }
-        "da-DK" { $Patterns = $Patterns_DA }
-        default { throw "Language not supported: $Language" }  # Default to English if language is not supported
-    }
-
     # Select the correct counters based on the language
-    switch ($Language) {
-        "en-US" { $Counters = $Counters_EN }
-        "da-DK" { $Counters = $Counters_DA }
-        default { throw "Language not supported: $Language" }  # Default to English if language is not supported
-    }
-    
+    $Counters = $Counters.Keys | ForEach-Object { $Counters[$_].Counter }
+
     try {
         $PerformanceData = Get-Counter -ErrorAction Stop -Counter $Counters -MaxSamples $MeasureTimeSeconds -SampleInterval 1
    
@@ -214,7 +295,6 @@ function Get-RDPSessions {
     $GeneralSlowResponsTime = 150
 
     [int]$ServerCPUUtil = $PerformanceData.CounterSamples | ? path -match $Patterns.CPUUtil | sort cookedvalue -Descending | select -first 1 | select -ExpandProperty CookedValue
-    #$session = $sessions | ? username -eq "laajadmin"
     foreach ($session in $sessions | ? state -eq "active" ) {
        
         #region App Responsetime
@@ -1091,11 +1171,19 @@ function Out-Log {
     $logMessage | Out-File -FilePath $LogPath -Append
 }
 function Initialize-Config {
-    $Rootfolder = "C:\CloudFactoryToolbox"
-    $Logfolder = join-path -Path $Rootfolder -ChildPath "Logs"
+    $script:DefaultRootFolder = "C:\CloudFactoryToolbox"
+    $script:DefaultLogFolder = Join-Path -Path $script:DefaultRootFolder -ChildPath "Logs"
+    $script:DefaultErrorLogPath = Join-Path -Path $script:DefaultLogFolder -ChildPath "Errors.log"
+    $Rootfolder = $script:DefaultRootFolder
+    $Logfolder = $script:DefaultLogFolder
     $configFilePath = Join-Path -Path $Rootfolder -ChildPath "config.json"
-    $ErrorLogPath = join-path -Path $Logfolder -ChildPath "Errors.log"
-    $OutputLogPath = join-path -Path $Logfolder -ChildPath "Output.log"
+    $ErrorLogPath = $script:DefaultErrorLogPath
+    $OutputLogPath = Join-Path -Path $Logfolder -ChildPath "Output.log"
+
+    # Create log folder if it doesn't exist (do this first)
+    if (!(Test-Path -Path $Logfolder)) {
+        New-Item -ItemType Directory -Force -Path $Logfolder | Out-Null
+    } 
 
     #load or create config.
     if (Test-Path -Path $configFilePath) {
@@ -1105,24 +1193,19 @@ function Initialize-Config {
             $global:config = $content | ConvertFrom-Json
         }
         catch {
-            "Error loading config config file." | Out-File -FilePath $ErrorLogPath -Append
+            $errorMessage = "Error loading config file: $($_.Exception.Message)"
+            $errorMessage | Out-File -FilePath $ErrorLogPath -Append
             $_ | Out-String | Out-File -FilePath $ErrorLogPath -Append
 
             #if an error happens, create a new config object.
             $global:config = [pscustomobject]@{}
         }
-        
     }
     else {
         $global:config = [pscustomobject]@{}
     }
 
-    #create logfolder if it doesnt exist. including parent folders
-    if (!(Test-Path -Path $Logfolder)) {
-        New-Item -ItemType Directory -Force -Path $Logfolder
-    } 
-
-    #add config properties if they dont exist. For backward comapatibility and to make sure to fix any user errors.
+    #add config properties if they dont exist. For backward compatibility and to make sure to fix any user errors.
     $properties = @{    
         Logfolder     = $Logfolder
         ErrorLogPath  = $ErrorLogPath
@@ -1253,7 +1336,12 @@ try {
     #write host which script is running
     Write-Host "Running $($MyInvocation.MyCommand.ScriptBlock.File)"
 
-    #elavate to admin if not already
+    # Create log directory first thing
+    if (!(Test-Path -Path $script:DefaultLogFolder)) {
+        New-Item -ItemType Directory -Force -Path $script:DefaultLogFolder | Out-Null
+    }
+
+    #elevate to admin if not already
     #region mainloop
     if (-not (ISElevated)) {
         write-host -ForegroundColor Red "Script was started without elevation. Restart with elevation!"
@@ -1329,18 +1417,58 @@ try {
 }
 catch {
     try {
-        $_ | Out-String 
+        # Create timestamp for the error
+        $errorTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        
+        # Determine error log path (use default if global:config is not available)
+        $errorLogPath = if ($global:config -and $global:config.ErrorLogPath) {
+            $global:config.ErrorLogPath
+        } else {
+            $script:DefaultErrorLogPath
+        }
+        
+        # Build detailed error message
+        $errorMessage = @"
+====================
+Time: $errorTime
+Script: $($MyInvocation.MyCommand.ScriptBlock.File)
+Action: $scriptaction
 
-        $_ | Out-String | Out-File -FilePath $global:config.ErrorLogPath -Append
+Error Details:
+$($_.Exception.Message)
+
+Stack Trace:
+$($_.ScriptStackTrace)
+
+Full Error:
+$($_ | Format-List -Property * | Out-String)
+====================
+
+"@
+        
+        # Write to console and log file
+        Write-Warning $errorMessage
+        Add-Content -Path $errorLogPath -Value $errorMessage -Encoding UTF8
     }
-    catch {}
+    catch {
+        # Fallback error handling if logging fails
+        $fallbackError = @"
+Failed to write to error log: $($_.Exception.Message)
+Original error: $($error[1])
+"@
+        Write-Warning $fallbackError
+        
+        # Try to write to system temp directory as last resort
+        $tempLogPath = Join-Path -Path $env:TEMP -ChildPath "PSToolbox_Error.log"
+        try {
+            Add-Content -Path $tempLogPath -Value $fallbackError -Encoding UTF8
+        }
+        catch {}
+    }
 
-    #pause if script is interactive
+    # Pause if script is interactive using a more compatible method
     if (ISInteractive) {
-        pause
+        Write-Host "Press Enter to continue..."
+        Read-Host
     }
-
-
 }
-
-#endregion
